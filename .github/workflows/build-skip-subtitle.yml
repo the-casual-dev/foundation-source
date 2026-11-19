@@ -23,3 +23,7 @@ jobs:
         with:
           name: mkvalidator-win64
           path: build/**/mkvalidator.exe
+      - name: Show which libs were picked
+        run: |
+          grep -i -E "bz|zlib" build/CMakeCache.txt || true
+          ldd build/mkvalidator/mkvalidator.exe || find build -name mkvalidator.exe -exec ldd {} \;
