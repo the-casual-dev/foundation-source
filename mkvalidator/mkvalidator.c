@@ -10,6 +10,10 @@
 #include <corec/str/str.h>
 #include <corec/helpers/parser/parser.h>
 
+#ifndef MATROSKA_TRACK_TYPE_SUBTITLE
+#define MATROSKA_TRACK_TYPE_SUBTITLE 0x11 // --skip-subtitle: Matroska TrackType value for subtitles
+#endif
+
 /*!
  * \todo verify the track timestamp scale is not null
  * \todo verify that the size of frames inside a lace is legit (ie the remaining size for the last must be > 0)
@@ -29,6 +33,7 @@ static bool_t Live = 0;
 static bool_t Details = 0;
 static bool_t DivX = 0;
 static bool_t Quiet = 0;
+static bool_t SkipSubtitle = 0; // --skip-subtitle: ignore subtitle tracks and their blocks
 static bool_t QuickExit = 0;
 static mkv_timestamp_t MinTime = INVALID_TIMESTAMP_T, MaxTime = INVALID_TIMESTAMP_T;
 static mkv_timestamp_t ClusterTime = INVALID_TIMESTAMP_T;
@@ -293,6 +298,13 @@ static int CheckVideoTrack(ebml_master *Track, int TrackNum, int ProfileNum)
     return Result;
 }
 
+// --skip-subtitle: true if the TrackEntry is a subtitle track
+static bool_t TrackEntryIsSubtitle(ebml_master *Track)
+{
+    ebml_element *TrackType = EBML_MasterFindChild(Track, MATROSKA_getContextTrackType());
+    return TrackType && EL_Int(TrackType) == MATROSKA_TRACK_TYPE_SUBTITLE;
+}
+
 static int CheckTracks(ebml_master *TrackEntries, int ProfileNum)
 {
     ebml_master *Track;
@@ -303,6 +315,13 @@ static int CheckTracks(ebml_master *TrackEntries, int ProfileNum)
     Track = (ebml_master*)EBML_MasterFindChild(TrackEntries, MATROSKA_getContextTrackEntry());
     while (Track)
     {
+        // --skip-subtitle: don't check the subtitle tracks
+        if (SkipSubtitle && TrackEntryIsSubtitle(Track))
+        {
+            Track = (ebml_master*)EBML_MasterNextChild(TrackEntries, Track);
+            continue;
+        }
+
         // check if the codec is valid for the profile
         TrackNum = EBML_MasterGetChild(Track, MATROSKA_getContextTrackNumber(), ProfileNum);
         if (TrackNum)
@@ -600,6 +619,24 @@ static bool_t TrackIsVideo(int16_t TrackNum, int ProfileNum)
     return 0;
 }
 
+// --skip-subtitle: true if the track number belongs to a subtitle track
+static bool_t TrackIsSubtitle(int16_t TrackNum, int ProfileNum)
+{
+    ebml_element *TrackData;
+    ebml_master *Track;
+    if (!RTrackInfo)
+        return 0;
+    Track = (ebml_master*)EBML_MasterFindChild(RTrackInfo, MATROSKA_getContextTrackEntry());
+    while (Track)
+    {
+        TrackData = EBML_MasterGetChild(Track, MATROSKA_getContextTrackNumber(), ProfileNum);
+        if (EL_Int(TrackData) == TrackNum)
+            return TrackEntryIsSubtitle(Track);
+        Track = (ebml_master*)EBML_MasterNextChild(RTrackInfo, Track);
+    }
+    return 0;
+}
+
 static bool_t TrackNeedsKeyframe(int16_t TrackNum, int ProfileNum)
 {
     ebml_element *TrackData;
@@ -757,6 +794,10 @@ static int CheckLacingKeyframe(int ProfileNum)
 
                         if (TrackIdx==ARRAYCOUNT(Tracks,track_info))
                             Result |= OutputError(0xB2,T("Block at %") TPRId64 T(" is using an unknown track #%d"),EL_Pos(GBlock),(int)BlockNum);
+                        else if (SkipSubtitle && TrackIsSubtitle(BlockNum, ProfileNum))
+                        {
+                            // --skip-subtitle: ignore the blocks of subtitle tracks
+                        }
                         else
                         {
                             if (MATROSKA_BlockLaced((matroska_block*)GBlock) && !TrackIsLaced(BlockNum, ProfileNum))
@@ -788,6 +829,10 @@ static int CheckLacingKeyframe(int ProfileNum)
 
                 if (TrackIdx==ARRAYCOUNT(Tracks,track_info))
                     Result |= OutputError(0xB2,T("Block at %") TPRId64 T(" is using an unknown track #%d"),EL_Pos(Block),(int)BlockNum);
+                else if (SkipSubtitle && TrackIsSubtitle(BlockNum, ProfileNum))
+                {
+                    // --skip-subtitle: ignore the blocks of subtitle tracks
+                }
                 else
                 {
                     if (MATROSKA_BlockLaced((matroska_block*)Block) && !TrackIsLaced(BlockNum, ProfileNum))
@@ -811,7 +856,7 @@ static int CheckLacingKeyframe(int ProfileNum)
     return Result;
 }
 
-static int CheckCueEntries(ebml_master *Cues)
+static int CheckCueEntries(ebml_master *Cues, int ProfileNum)
 {
     int Result = 0;
     mkv_timestamp_t TimestampEntry, PrevTimestamp = INVALID_TIMESTAMP_T;
@@ -832,6 +877,13 @@ static int CheckCueEntries(ebml_master *Cues)
             MATROSKA_LinkCueSegmentInfo(CuePoint,RSegmentInfo);
             TimestampEntry = MATROSKA_CueTimestamp(CuePoint);
             TrackNumEntry = MATROSKA_CueTrackNum(CuePoint);
+
+            // --skip-subtitle: don't check the Cue entries of subtitle tracks
+            if (SkipSubtitle && TrackIsSubtitle(TrackNumEntry, ProfileNum))
+            {
+                CuePoint = (matroska_cuepoint*)EBML_MasterNextChild(Cues, CuePoint);
+                continue;
+            }
 
             if (TimestampEntry < PrevTimestamp && PrevTimestamp != INVALID_TIMESTAMP_T)
                 OutputWarning(0x311,T("The Cues entry for timestamp %") TPRId64 T(" ms is listed after entry %") TPRId64 T(" ms"),Scale64(TimestampEntry,1,1000000),Scale64(PrevTimestamp,1,1000000));
@@ -908,6 +960,7 @@ int main(int argc, const char *argv[])
         else if (tcsisame_ascii(Path,T("--divx"))) DivX = 1;
         else if (tcsisame_ascii(Path,T("--version"))) ShowVersion = 1;
         else if (tcsisame_ascii(Path,T("--quiet"))) Quiet = 1;
+        else if (tcsisame_ascii(Path,T("--skip-subtitle"))) SkipSubtitle = 1;
         else if (tcsisame_ascii(Path,T("--quick"))) QuickExit = 1;
         else if (tcsisame_ascii(Path,T("--help"))) {ShowVersion = 1; ShowUsage = 1;}
         else if (i<argc-1) TextPrintf(StdErr,T("Unknown parameter '%s'\r\n"),Path);
@@ -926,6 +979,7 @@ int main(int argc, const char *argv[])
             TextWrite(StdErr,T("  --divx      assume the file is using DivX specific extensions\r\n"));
             TextWrite(StdErr,T("  --quick     exit after the first error or warning\r\n"));
             TextWrite(StdErr,T("  --quiet     don't ouput progress and file info\r\n"));
+            TextWrite(StdErr,T("  --skip-subtitle  ignore the subtitle tracks of the file\r\n"));
             TextWrite(StdErr,T("  --version   show the version of ") PROJECT_NAME T("\r\n"));
             TextWrite(StdErr,T("  --help      show this screen\r\n"));
         }
@@ -1344,7 +1398,7 @@ int main(int argc, const char *argv[])
                 OutputWarning(0x800,T("The segment has Clusters but no Cues section (bad for seeking)"));
         }
         else
-            Result |= CheckCueEntries(RCues);
+            Result |= CheckCueEntries(RCues, MatroskaProfile);
         if (!RTrackInfo)
         {
             Result = OutputError(0x41,T("The segment has Clusters but no TrackInfo section"));
@@ -1358,7 +1412,7 @@ int main(int argc, const char *argv[])
 
     for (TI=ARRAYBEGIN(Tracks,track_info); TI!=ARRAYEND(Tracks,track_info); ++TI)
     {
-        if (TI->DataLength==0)
+        if (TI->DataLength==0 && !(SkipSubtitle && TI->Kind==MATROSKA_TRACK_TYPE_SUBTITLE))
             OutputWarning(0xB8,T("Track #%d is defined but has no frame"),TI->Num);
     }
 
@@ -1372,6 +1426,8 @@ int main(int argc, const char *argv[])
         {
             for (TI=ARRAYBEGIN(Tracks,track_info); TI!=ARRAYEND(Tracks,track_info); ++TI)
             {
+                if (SkipSubtitle && TI->Kind==MATROSKA_TRACK_TYPE_SUBTITLE)
+                    continue;
                 EBML_StringGet(TI->CodecID,String,TSIZEOF(String));
                 TextPrintf(StdErr,T("Track #%d %18s %") TPRId64 T(" bits/s\r\n"),TI->Num,String,Scale64(TI->DataLength,8000000, (MaxTime-MinTime)/1000));
             }
