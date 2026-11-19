@@ -1,5 +1,5 @@
 name: build-skip-subtitle
-on: [push, workflow_dispatch]
+on: workflow_dispatch
 jobs:
   win64:
     runs-on: windows-latest
