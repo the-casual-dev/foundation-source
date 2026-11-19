@@ -11,19 +11,26 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
-      - run: >
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-          -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
-          -DCMAKE_C_FLAGS="-std=gnu11 -fno-strict-aliasing"
-          -DCMAKE_EXE_LINKER_FLAGS="-municode -static"
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-zlib mingw-w64-x86_64-bzip2
+      - name: Configure
+        run: |
+          MINGW=$(cygpath -m /mingw64)
+          ls -l "$MINGW/lib/libz.a" "$MINGW/lib/libbz2.a"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_C_FLAGS="-std=gnu11 -fno-strict-aliasing" \
+            -DCMAKE_EXE_LINKER_FLAGS="-municode -static" \
+            -DZLIB_LIBRARY_RELEASE="$MINGW/lib/libz.a" \
+            -DBZIP2_LIBRARY_RELEASE="$MINGW/lib/libbz2.a"
       - run: cmake --build build --target mkvalidator
+      - name: Check the exe is standalone
+        run: |
+          EXE=$(find build -name mkvalidator.exe | head -n 1)
+          echo "$EXE"
+          ldd "$EXE"
+          if ldd "$EXE" | grep -i -E "zlib1|libbz2"; then echo "STILL DYNAMIC"; else echo "STANDALONE OK"; fi
       - uses: actions/upload-artifact@v4
         with:
           name: mkvalidator-win64
           path: build/**/mkvalidator.exe
-      - name: Show which libs were picked
-        run: |
-          grep -i -E "bz|zlib" build/CMakeCache.txt || true
-          ldd build/mkvalidator/mkvalidator.exe || find build -name mkvalidator.exe -exec ldd {} \;
