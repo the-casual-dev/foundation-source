@@ -12,8 +12,6 @@ on:
       - '!**'
       - 'spectool/schema_2_matroska_sem_c.xsl'
       - 'spectool/schema_2_matroska_sem_h.xsl'
-  schedule:
-    - cron: '44 16 * * 6'
 
 jobs:
   xlst_generators:
