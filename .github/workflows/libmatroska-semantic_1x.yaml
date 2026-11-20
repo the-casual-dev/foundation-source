@@ -12,8 +12,6 @@ on:
       - '!**'
       - 'spectool/schema_2_kaxsemantic_cpp_1x.xsl'
       - 'spectool/schema_2_kaxsemantic_h_1x.xsl'
-  schedule:
-    - cron: '44 16 * * 6'
 
 jobs:
   xlst_generators:
